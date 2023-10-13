@@ -1,9 +1,8 @@
-import os
-import csv
 import logging
-import connector
+import subprocess
+import os
 import my_parser
-#import tg_bot
+import tg_bot
 
 # Настроим логирование
 logging.basicConfig(filename='parser.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -13,7 +12,7 @@ logger = logging.getLogger()
 logger.addHandler(console_handler)
 
 def show_menu():
-    print("\nВыберите действие:")
+    print("Выберите действие:")
     print("0. Выход")
     print("1. Запуск Telegram бота")
     print("2. Запуск парсинга")
@@ -23,7 +22,6 @@ def show_menu():
 
 def main_menu():
     while True:
-        #os.system('clear')
         show_menu()
         choice = input("Введите номер действия: ")
 
@@ -31,24 +29,15 @@ def main_menu():
             print("Выход из программы.")
             break
 
-        #elif choice == '1':
-            # Запуск Telegram бота
-            #tg_bot.bot.polling(none_stop=True)
+        elif choice == '1':
+            # Запуск Telegram бота в фоновом режиме
+            tg_bot.run_bot()
+            print("Запущен Telegram бот в фоновом режиме...")
 
         elif choice == '2':
-            driver = connector.initialize_driver()
-            with open('log_pass.txt', 'r') as login_pass_file:
-                lines = login_pass_file.readlines()
-                if len(lines) >= 2:
-                    login = lines[0].strip()
-                    password = lines[1].strip()
-                else:
-                    print("Файл 'log_pass.txt' должен содержать логин и пароль на двух разных строках.")
-                    continue
-            login_url = "https://auth.sberclass.ru/auth/realms/EduPowerKeycloak/protocol/openid-connect/auth?client_id=school21&redirect_uri=https%3A%2F%2Fedu.21-school.ru%2F&state=32a4629c-9404-46ca-8729-fb3cae801c1c&response_mode=fragment&response_type=code&scope=openid&nonce=9ca33f99-639f-44a4-8ad3-1b0bad3257f1"
-            connector.login(driver, login, password, login_url)
-            my_parser.parse_and_save(driver)
-            print("Парсинг завершен!")
+            # Запуск парсера
+            print("Запущен код парсинга")
+            my_parser.run_parser()
 
         elif choice == '3':
             os.system('clear')
@@ -98,7 +87,7 @@ def main_menu():
 
             else:
                 print("Некорректный выбор.")
-            
+
         elif choice == '5':
             # Установка зависимостей и запуск webdriver.sh
             try:

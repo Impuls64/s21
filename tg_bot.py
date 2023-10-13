@@ -1,130 +1,130 @@
-import os
-import re
-import csv
-import logging
 import time
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 import telebot
-from bs4 import BeautifulSoup
-import requests
+import my_parser
+from threading import Thread
+import logging
 from telebot import types
-import pandas as pd
+import time
 
-# Инициализация бота с токеном из файла log_pass.txt (токен в третьей строке)
+
+# my_parser.py
+stop_parsing = False
+
+# Установка обработчика журнала для записи в файл
+logging.basicConfig(
+    level=logging.INFO,
+    filename='parser.log',
+    filemode='a',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Чтение токена бота из файла log_pass.txt
 with open('log_pass.txt', 'r') as login_pass_file:
     lines = login_pass_file.readlines()
     if len(lines) >= 3:
         bot_token = lines[2].strip()
-        bot = telebot.TeleBot(bot_token)
+        logging.info("Токен Telegram бота найден")
     else:
-        print("Токен Telegram бота не найден в файле log_pass.txt. Убедитесь, что он находится в третьей строке.")
+        logging.error("Токен Telegram бота не найден в файле log_pass.txt. Убедитесь, что он находится в третьей строке.")
         exit()
+chat_id = 1273830101
 
-# Настройки логирования
-logging.basicConfig(filename='parser.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-logger = logging.getLogger()
-logger.addHandler(console_handler)
+# Инициализация бота
+bot = telebot.TeleBot(bot_token)
 
-# Состояния бота
-START, GET_LOGIN, GET_PASSWORD, GET_START_TIME, GET_END_TIME, GET_PROJECT, CONFIRMATION = range(7)
+# Добавьте глобальную переменную для хранения времени запуска парсера
+parser_start_time = None
+parser_thread = None
 
-# Глобальные переменные для хранения данных
-user_data = {"start_time": None, "end_time": None, "project_name": None, "login": None, "password": None}
+# Функция для отправки сообщения о времени работы парсера
+def send_parser_runtime(message):
+    try:
+        bot.send_message(chat_id, message)
+    except Exception as e:
+        logging.error(f"Ошибка при отправке сообщения: {e}")
 
-# Функция, которая начинает диалог и запрашивает логин
+def start_parser(message):
+    global parser_start_time
+    global parser_thread
+    if parser_thread and parser_thread.is_alive():
+        bot.send_message(message.chat.id, "Парсер уже запущен.")
+    else:
+        parser_start_time = time.time()
+        my_parser.parser_start_time = parser_start_time  # Передайте время начала парсера
+        bot.send_message(message.chat.id, "Запущен парсер...")
+        parser_thread = Thread(target=my_parser.run_parser)
+        parser_thread.start()
+
+def stop_parser(message):
+    global parser_start_time
+    global parser_thread
+    if parser_thread and parser_thread.is_alive():
+        parser_thread.join()
+        parser_start_time = None
+        bot.send_message(message.chat.id, "Парсер остановлен.")
+    else:
+        bot.send_message(message.chat.id, "Парсер не был запущен.")
+
+class MyHandler(FileSystemEventHandler):
+    def __init__(self, *args, **kwargs):
+        super(MyHandler, self).__init__(*args, **kwargs)
+        self.last_position = 0
+
+    def on_modified(self, event):
+        if event.src_path.endswith('parser.log'):
+            with open(event.src_path, 'r', encoding='utf-8') as file:
+                file.seek(self.last_position)
+                lines = file.readlines()
+                self.last_position = file.tell()
+                for line in lines:
+                    if "Найден проверяющий для проекта" in line:
+                        send_parser_runtime("Найден проверяющий для проекта")
+
+# Добавьте обработчики команд /start_parser и /stop_parser
+@bot.message_handler(commands=['start_parser'])
+def start_parser_command(message):
+    start_parser(message)
+
+@bot.message_handler(commands=['stop_parser'])
+def stop_parser_command(message):
+    stop_parser(message)
+
+# Создание кнопок для запуска и остановки парсера
+keyboard = types.ReplyKeyboardMarkup(row_width=2, one_time_keyboard=True)
+btn_start_parser = types.KeyboardButton("/start_parser")
+btn_stop_parser = types.KeyboardButton("/stop_parser")
+keyboard.add(btn_start_parser, btn_stop_parser)
+
+# Обработка команды /start
 @bot.message_handler(commands=['start'])
-def start(message):
-    user_data.clear()
-    bot.send_message(message.chat.id, "Давайте начнем. Введите логин в формате login@student.21-school.ru:")
-    bot.register_next_step_handler(message, get_login)
+def start_command(message):
+    bot.send_message(message.chat.id, "Привет! Я бот для управления парсером. Для запуска парсера, используй команду /start_parser.", reply_markup=keyboard)
 
-# Функция, которая получает логин и запрашивает пароль
-def get_login(message):
-    login = message.text
-    user_data["login"] = login
-    bot.send_message(message.chat.id, "Введите пароль:")
-    bot.register_next_step_handler(message, get_password)
+# Обработка команды /help
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    bot.send_message(message.chat.id, "Я бот для управления парсером. Для запуска парсера, используй команду /start_parser.", reply_markup=keyboard)
 
-# Функция, которая получает пароль и запрашивает начальное время
-def get_password(message):
-    password = message.text
-    user_data["password"] = password
-    bot.send_message(message.chat.id, "Введите время начала (например, 09:00):")
-    bot.register_next_step_handler(message, get_start_time)
+# Функция для запуска бота в отдельном потоке
+def run_bot():
+    bot.polling()
 
-# Функция, которая получает начальное время и запрашивает конечное время
-def get_start_time(message):
-    start_time = message.text
-    user_data["start_time"] = start_time
-    bot.send_message(message.chat.id, "Введите время окончания (например, 17:00):")
-    bot.register_next_step_handler(message, get_end_time)
+# Запуск бота в отдельном потоке
+if __name__ == "__main__":
+    event_handler = MyHandler()
 
-# Функция, которая получает конечное время и запрашивает название проекта
-def get_end_time(message):
-    end_time = message.text
-    user_data["end_time"] = end_time
-    bot.send_message(message.chat.id, "Введите название проекта:")
-    bot.register_next_step_handler(message, get_project)
-
-def get_project(message):
-    project_name = message.text
-    user_data["project_name"] = project_name
-
-    # Загрузка данных из файла clear.csv
-    data = pd.read_csv('clear.csv', header=None)
-
-    # Проверка наличия названия проекта в первом столбце файла
-    if project_name in data.iloc[:, 0].values:
-        user_data["project_found"] = True  # Добавим признак того, что проект найден
-        bot.send_message(message.chat.id, f"Проект '{project_name}' найден. Пожалуйста, подтвердите данные (/confirm) или отмените (/cancel):")
-    else:
-        user_data["project_found"] = False  # Добавим признак того, что проект не найден
-        bot.send_message(message.chat.id, f"Проект '{project_name}' не найден. Пожалуйста, проверьте название проекта и повторите ввод.")
-
-# Функция, которая подтверждает данные и выполняет парсинг
-@bot.message_handler(commands=['confirm'])
-def confirmation(message):
-    if user_data.get("project_found", False):
-        # Проект найден, выполните соответствующую логику
-        # Например, продолжите с парсингом
-        bot.send_message(message.chat.id, "Проект найден. Выполняется парсинг...")
-
-        # Ваши действия при нахождении проекта
-
-    else:
-        # Проект не найден, сообщите об этом
-        bot.send_message(message.chat.id, "Проект не найден. Операция отменена.")
-
-    # Очистите данные пользователя после завершения
-    user_data.clear()
-
-# Функция для обратной связи
-@bot.message_handler(func=lambda message: True)
-def feedback(message):
-    project_name = user_data.get("project_name", "не указан")
-    start_time = user_data.get("start_time", "не указано")
-    end_time = user_data.get("end_time", "не указано")
-
-    # Здесь вы можете добавить код для отправки сообщения с обратной связью вам
-    # Сообщение может содержать имя пользователя, время и текст сообщения
-    user_name = message.from_user.first_name
-    user_message = message.text
-
-    feedback_message = f"Получена обратная связь от пользователя {user_name}:\n"
-    feedback_message += f"Время: {start_time} - {end_time}\n"
-    feedback_message += f"Проект: {project_name}\n"
-    feedback_message += f"Сообщение: {user_message}"
-
-    # Отправить сообщение с обратной связью на ваш аккаунт или почту
-    # Здесь вы можете использовать какой-либо метод доставки сообщений
-
-    bot.send_message(message.chat.id, "Спасибо за ваше сообщение! Мы свяжемся с вами в ближайшее время.")
-
-# Функция для отмены разговора
-@bot.message_handler(commands=['cancel'])
-def cancel(message):
-    bot.send_message(message.chat.id, "Действие отменено.")
-
-# Запуск бота
-bot.polling(none_stop=True)
+    bot_thread = Thread(target=run_bot)
+    bot_thread.start()
+    
+    observer = Observer()
+    observer.schedule(event_handler, path='parser.log', recursive=False)
+    observer.start()
+    
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
