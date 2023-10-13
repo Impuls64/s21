@@ -1,8 +1,14 @@
 import logging
-import subprocess
-import os
 import my_parser
+import os
+from my_parser import run_parser
 import tg_bot
+from connector import initialize_driver, login
+from tg_bot import run_bot
+
+#driver = my_parser.initialize_driver()
+#tg_bot.set_driver(driver)  # Устанавливаем драйвер для бота
+
 
 # Настроим логирование
 logging.basicConfig(filename='parser.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -34,10 +40,15 @@ def main_menu():
             tg_bot.run_bot()
             print("Запущен Telegram бот в фоновом режиме...")
 
+
         elif choice == '2':
-            # Запуск парсера
-            print("Запущен код парсинга")
+            print("Выбран парсер")
+            # Initialize the driver
+            #driver = initialize_driver()
+            # Pass the driver to the parser
             my_parser.run_parser()
+
+
 
         elif choice == '3':
             os.system('clear')

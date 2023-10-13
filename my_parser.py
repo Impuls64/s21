@@ -1,18 +1,19 @@
+import threading
 import logging
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
-from connector import initialize_driver
 import time
 import requests
+import csv
 import connector
 import tg_bot
-import csv
+from connector import initialize_driver
 
-# Добавим переменную для хранения времени запуска парсера
-parser_start_time = None
+# connector.parser_thread = Thread(target=run_parser)
+# connector.parser_thread.start()
 
 # Настроим логирование
 logging.basicConfig(filename='parser.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,29 +22,58 @@ console_handler.setLevel(logging.INFO)
 logger = logging.getLogger()
 logger.addHandler(console_handler)
 
+# Добавьте глобальную переменную для хранения состояния парсера (запущен/остановлен)
+parser_running = False
+parser_thread = None
+driver = None
+
+# Функция для запуска парсера
+def start_parser():
+    global parser_thread
+    if parser_thread and parser_thread.is_alive():
+        logger.info("Парсер уже запущен из my_parser")
+    else:
+        parser_thread = threading.Thread(target=run_parser)
+        parser_thread.start()
+
+# Функция для остановки парсера
+def stop_parser():
+    global parser_running
+    if parser_running:
+        parser_running = False
+        if driver:
+            try:
+                driver.quit()
+                logger.info("Парсер остановлен из my_parser")
+            except Exception as e:
+                logger.error(f"Произошла ошибка при остановке драйвера: {str(e)}", exc_info=True)
+    else:
+        logger.info("Парсер не был запущен из my_parser")
+
+# Модифицируйте функцию `run_parser` для проверки состояния `parser_running`
 def run_parser():
-    driver = connector.initialize_driver()
+    global driver
+    global parser_running
+    driver = initialize_driver()
     with open('log_pass.txt', 'r') as login_pass_file:
         lines = login_pass_file.readlines()
         if len(lines) >= 2:
-            login = lines[0].strip()
+            my_login = lines[0].strip()
             password = lines[1].strip()
         else:
-            print("Файл 'log_pass.txt' должен содержать логин и пароль на двух разных строках.")
+            logger.error("Файл 'log_pass.txt' должен содержать логин и пароль на двух разных строках.")
             return
 
     login_url = "https://auth.sberclass.ru/auth/realms/EduPowerKeycloak/protocol/openid-connect/auth?client_id=school21&redirect_uri=https%3A%2F%2Fedu.21-school.ru%2F&state=32a4629c-9404-46ca-8729-fb3cae801c1c&response_mode=fragment&response_type=code&scope=openid&nonce=9ca33f99-639f-44a4-8ad3-1b0bad3257f1"
 
     try:
-        connector.login(driver, login, password, login_url)
-        tg_bot.send_parser_runtime("Запущен парсер из основного скрипта")  
-        # Отправим уведомление в бот
+        connector.login(driver, my_login, password, login_url)
         parse_and_save(driver)
         logger.info(f'Парсинг завершён')
-        tg_bot.send_parser_runtime("Парсер завершил работу из основного скрипта")  
-        # Уведомление о завершении
     except ConnectionRefusedError:
-        print("Произошла ошибка: Connection refused. Проверьте доступность сервера и интернет-соединения.")
+        logger.error("Произошла ошибка: Connection refused. Проверьте доступность сервера и интернет-соединения.")
+    finally:
+        driver.quit()
 
 
 def parse_and_save(driver):
@@ -84,17 +114,11 @@ def parse_and_save(driver):
 
             while True:
                 try:
-                    link_elements = driver.find_elements(By.XPATH, '/html/body/div/div[4]/div/div[3]/div[4]/div/div[1]')
-                    # /html/body/div/div[4]/div/div[3]/div[4]/div/div[1]
-                    # 
+                    link_elements = driver.find_elements(By.XPATH, '/html/body/div/div[4]/div/div/3/div[4]/div/div[1]')
                     links = [element.get_attribute('href') for element in link_elements]
 
                     if not links:
-                        #logger.warning("Проверяющие не найдены")
-                        #logger.info('Отдых 30 секунд')
                         logger.info(f'Ищем проверяющих на странице: {current_url}')
-                        #driver.refresh()
-                        #time.sleep(30)
                     else:
                         logger.info(f'Найден проверяющий для проекта')  # Запись в лог
                         logger.info(f'Найдены следующие проверяющие: {", ".join(links)}')
@@ -117,9 +141,9 @@ def parse_and_save(driver):
         logger.info('Прервано пользователем.')
     except Exception as e:
         driver.quit()
-        logger.error('Произошла ошибка: {str(e)}', exc_info=False)
+        logger.error(f'Произошла ошибка: {str(e)}', exc_info=False)
     finally:
         driver.quit()
 
-if __name__ == "__main__":
+if __name__ == "__main":
     initialize_driver()
